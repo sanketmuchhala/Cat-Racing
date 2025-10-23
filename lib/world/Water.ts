@@ -87,6 +87,7 @@ export class Water {
     this.mesh = new THREE.Mesh(geometry, this.material);
     this.mesh.position.y = 0;
     this.mesh.receiveShadow = true;
+    this.mesh.frustumCulled = false; // Water should always render
   }
 
   update(dt: number): void {
@@ -100,6 +101,12 @@ export class Water {
 
   setPosition(y: number): void {
     this.mesh.position.y = y;
+  }
+
+  updatePosition(cameraX: number, cameraZ: number): void {
+    // Keep water centered on camera (only X and Z, Y stays at water level)
+    this.mesh.position.x = cameraX;
+    this.mesh.position.z = cameraZ;
   }
 
   getMesh(): THREE.Mesh {

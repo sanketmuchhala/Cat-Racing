@@ -7,11 +7,11 @@ export function createRoadMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
-      uRoadColor: { value: new THREE.Color(0x505050) },
-      uLineColor: { value: new THREE.Color(0xffffff) },
+      uRoadColor: { value: new THREE.Color(0x1a1a1a) }, // Black asphalt
+      uLineColor: { value: new THREE.Color(0xffffff) }, // White lines
       uDashScale: { value: 20.0 },
-      uDashWidth: { value: 0.05 },
-      uLineWidth: { value: 0.02 },
+      uDashWidth: { value: 0.5 },
+      uLineWidth: { value: 0.015 },
       uWetness: { value: 0.0 },
       uSnowAmount: { value: 0.0 },
     },
@@ -50,21 +50,22 @@ export function createRoadMaterial(): THREE.ShaderMaterial {
       void main() {
         vec3 color = uRoadColor;
 
-        // Add subtle noise to road surface
-        float surfaceNoise = noise(vWorldPos.xz * 5.0) * 0.1;
+        // Add very subtle noise to road surface for realism
+        float surfaceNoise = noise(vWorldPos.xz * 3.0) * 0.05;
         color *= (1.0 + surfaceNoise);
 
-        // Dashed centerline
+        // Dashed centerline (yellow for US-style roads)
         float centerDist = abs(vUv.x - 0.5);
         if (centerDist < uLineWidth) {
           float dashPattern = step(uDashWidth, fract(vUv.y * uDashScale));
-          color = mix(uLineColor, color, dashPattern);
+          vec3 yellowLine = vec3(1.0, 0.9, 0.0); // Yellow center line
+          color = mix(yellowLine, color, dashPattern);
         }
 
-        // Edge lines
-        float edgeWidth = 0.01;
+        // Solid white edge lines
+        float edgeWidth = 0.012;
         if (vUv.x < edgeWidth || vUv.x > 1.0 - edgeWidth) {
-          color = mix(uLineColor, color, 0.5);
+          color = uLineColor; // Solid white edges
         }
 
         // Wetness effect (darker + reflective)

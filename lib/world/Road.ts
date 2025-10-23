@@ -24,17 +24,17 @@ export class Road {
   private noise: Noise;
 
   private readonly segmentLength = 5;
-  private readonly roadWidth = 8;
-  private readonly maxSegments = 256;
+  private readonly roadWidth = 12; // Wider for proper highway look
+  private readonly maxSegments = 400; // More segments for longer road
   private totalDistance = 0;
 
   constructor() {
     this.noise = new Noise();
     this.material = createRoadMaterial();
 
-    // Initialize spline with straight road
+    // Initialize spline with straight road (extend backwards and forwards)
     const initialPoints: THREE.Vector3[] = [];
-    for (let i = 0; i < 20; i++) {
+    for (let i = -10; i < 30; i++) {
       initialPoints.push(new THREE.Vector3(0, 0, i * this.segmentLength));
     }
     this.spline = new Spline(initialPoints);
@@ -42,7 +42,9 @@ export class Road {
     // Create mesh
     const geometry = new THREE.BufferGeometry();
     this.mesh = new THREE.Mesh(geometry, this.material);
+    this.mesh.position.y = 0.05; // Elevate slightly above terrain
     this.mesh.receiveShadow = true;
+    this.mesh.frustumCulled = false; // Prevent road from being culled
 
     // Generate initial segments
     this.generateInitialSegments();
@@ -76,17 +78,18 @@ export class Road {
     for (let i = 0; i < this.segments.length; i++) {
       const seg = this.segments[i];
 
-      // Calculate road vertices (left and right edges)
+      // Calculate road vertices (left and right edges) - flat but can curve horizontally
       const halfWidth = seg.width * 0.5;
-      const bankRotation = new THREE.Quaternion().setFromAxisAngle(
-        seg.tangent,
-        seg.bank
-      );
-      const rightVec = seg.binormal.clone().applyQuaternion(bankRotation);
-      const upVec = seg.normal.clone().applyQuaternion(bankRotation);
 
-      const left = seg.center.clone().sub(rightVec.clone().multiplyScalar(halfWidth));
-      const right = seg.center.clone().add(rightVec.clone().multiplyScalar(halfWidth));
+      // Calculate right vector from tangent (for curves) but keep flat
+      const tangentFlat = new THREE.Vector3(seg.tangent.x, 0, seg.tangent.z).normalize();
+      const rightVec = new THREE.Vector3(0, 1, 0).cross(tangentFlat).normalize();
+      const upVec = new THREE.Vector3(0, 1, 0); // Always up
+
+      // Keep road flat at Y=0 but allow horizontal curves
+      const centerFlat = new THREE.Vector3(seg.center.x, 0, seg.center.z);
+      const left = centerFlat.clone().sub(rightVec.clone().multiplyScalar(halfWidth));
+      const right = centerFlat.clone().add(rightVec.clone().multiplyScalar(halfWidth));
 
       // Positions
       positions.push(left.x, left.y, left.z);
@@ -109,13 +112,31 @@ export class Road {
       }
     }
 
-    // Update geometry
+    // Update geometry (reuse attributes for stability)
     const geometry = this.mesh.geometry as THREE.BufferGeometry;
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+
+    const posAttr = geometry.getAttribute('position');
+    const normAttr = geometry.getAttribute('normal');
+    const uvAttr = geometry.getAttribute('uv');
+
+    if (posAttr && posAttr.count === positions.length / 3) {
+      // Update existing attributes
+      (posAttr as THREE.BufferAttribute).array.set(positions);
+      posAttr.needsUpdate = true;
+      (normAttr as THREE.BufferAttribute).array.set(normals);
+      normAttr.needsUpdate = true;
+      (uvAttr as THREE.BufferAttribute).array.set(uvs);
+      uvAttr.needsUpdate = true;
+    } else {
+      // Create new attributes (first time or size changed)
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    }
+
     geometry.setIndex(indices);
-    geometry.computeBoundingSphere();
+    // Disable frustum culling to prevent road from disappearing
+    this.mesh.frustumCulled = false;
   }
 
   extend(playerZ: number): void {
@@ -126,8 +147,8 @@ export class Road {
     if (distanceAhead < this.maxSegments * this.segmentLength * 0.5) {
       // Generate new control point for spline
       const lastPoint = this.spline.getPoints()[this.spline.getPoints().length - 1];
-      const noise = this.noise.get2D(this.totalDistance * 0.01, 0);
-      const curvature = noise * 15; // Curve left/right
+      const noise = this.noise.get2D(this.totalDistance * 0.003, 0);
+      const curvature = noise * 8; // Gentle realistic curves
 
       const newPoint = lastPoint
         .clone()
@@ -181,6 +202,10 @@ export class Road {
   getSegmentAt(distance: number): RoadSegment | null {
     const idx = Math.floor(distance / this.segmentLength) % this.segments.length;
     return this.segments[idx] || null;
+  }
+
+  getSegments(): RoadSegment[] {
+    return this.segments;
   }
 
   getMesh(): THREE.Mesh {

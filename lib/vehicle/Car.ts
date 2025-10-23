@@ -36,6 +36,11 @@ export class Car {
   private suspensionOffset = 0;
   private suspensionTime = 0;
 
+  // Anti-rollover
+  private rollAngle = 0;
+  private readonly maxRollAngle = Math.PI / 6; // 30 degrees max roll
+  private readonly rollRecoverySpeed = 2.0; // How fast to recover from roll
+
   constructor(config: CarConfig = {}) {
     this.maxSpeed = config.maxSpeed ?? 60;
     this.acceleration = config.acceleration ?? 15;
@@ -72,7 +77,7 @@ export class Car {
     // Main body
     const mainBodyGeo = new THREE.BoxGeometry(1.6, 0.6, 3);
     const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x4a90e2,
+      color: 0xffffff, // White car for visibility
       metalness: 0.6,
       roughness: 0.4,
     });
@@ -188,6 +193,13 @@ export class Car {
     // Update position
     this.position.add(this.velocity.clone().multiplyScalar(dt));
 
+    // Keep car on road (constrain X position)
+    const roadWidth = 10; // Road is 12 units wide, leave small margin
+    this.position.x = THREE.MathUtils.clamp(this.position.x, -roadWidth / 2, roadWidth / 2);
+
+    // Keep car at road height
+    this.position.y = 0.55; // Match elevated road height
+
     // Update group transform
     this.group.position.copy(this.position);
     this.group.quaternion.setFromUnitVectors(
@@ -211,8 +223,33 @@ export class Car {
       }
     });
 
-    // Body tilt when turning
-    this.group.rotation.z = -this.steerAngle * 0.05 * (this.speed / this.maxSpeed);
+    // Anti-rollover: body tilt when turning with limits
+    const targetRoll = -this.steerAngle * 0.08 * (this.speed / this.maxSpeed);
+
+    // Smoothly interpolate to target roll
+    this.rollAngle = THREE.MathUtils.lerp(this.rollAngle, targetRoll, 0.15);
+
+    // Clamp roll to prevent rollover
+    this.rollAngle = THREE.MathUtils.clamp(
+      this.rollAngle,
+      -this.maxRollAngle,
+      this.maxRollAngle
+    );
+
+    // If roll is extreme, add recovery force
+    if (Math.abs(this.rollAngle) > this.maxRollAngle * 0.8) {
+      this.rollAngle *= 1 - (this.rollRecoverySpeed * dt);
+    }
+
+    // Apply roll to car body
+    this.group.rotation.z = this.rollAngle;
+
+    // If car is nearly upside down, auto-recover
+    if (Math.abs(this.group.rotation.z) > Math.PI / 2) {
+      this.group.rotation.z = 0;
+      this.rollAngle = 0;
+      this.speed *= 0.5; // Slow down on recovery
+    }
   }
 
   getPosition(): THREE.Vector3 {

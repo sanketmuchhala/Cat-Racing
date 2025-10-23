@@ -19,16 +19,24 @@ export class Terrain {
   private group: THREE.Group;
 
   private readonly chunkSize = 50;
-  private readonly chunkSegments = 32;
-  private readonly chunkSegmentsLOD = 16;
-  private readonly viewDistance = 200;
-  private readonly heightScale = 15;
-  private readonly waterLevel = 0;
+  private readonly chunkSegments = 48; // Higher segments for smoother terrain
+  private readonly chunkSegmentsLOD = 32;
+  private readonly viewDistance = 250;
+  private readonly heightScale = 5; // Even gentler hills
+  private readonly waterLevel = -2; // Lower water level to create visible lakes
 
   constructor() {
     this.noise = new Noise();
     this.material = createTerrainMaterial();
     this.group = new THREE.Group();
+
+    // Pre-generate initial chunks around origin for stable start
+    const chunksRadius = 3;
+    for (let x = -chunksRadius; x <= chunksRadius; x++) {
+      for (let z = -chunksRadius; z <= chunksRadius; z++) {
+        this.createChunk(x, z, 0, 0);
+      }
+    }
   }
 
   update(cameraX: number, cameraZ: number): void {
@@ -74,10 +82,10 @@ export class Terrain {
       this.chunks.delete(key);
     });
 
-    // Update LOD (simplified: just adjust based on distance)
+    // Keep all chunks visible (no LOD flickering)
     this.chunks.forEach((chunk) => {
-      // Could swap geometries here for true LOD
-      chunk.mesh.visible = chunk.distance < this.viewDistance;
+      chunk.mesh.visible = true;
+      chunk.mesh.frustumCulled = false; // Prevent culling artifacts
     });
   }
 
@@ -106,11 +114,21 @@ export class Terrain {
       const globalX = chunkX * this.chunkSize + localX;
       const globalZ = chunkZ * this.chunkSize + localZ;
 
-      // Get height from noise
-      let height = this.noise.getHeight(globalX, globalZ, 0.03) * this.heightScale;
+      // Get height from noise with smoother frequency
+      let height = this.noise.getHeight(globalX, globalZ, 0.02) * this.heightScale;
 
-      // Add more detail with higher frequency noise
-      height += this.noise.fbm(globalX * 0.1, globalZ * 0.1, 2, 0.4, 2.5) * 2;
+      // Add gentle detail with higher frequency noise
+      height += this.noise.fbm(globalX * 0.05, globalZ * 0.05, 3, 0.3, 2.0) * 1.5;
+
+      // Cut out the road area - make terrain much lower where road is
+      const roadWidth = 16; // Wide cutout for 12-unit road plus margins
+      const distanceFromRoad = Math.abs(globalX);
+      if (distanceFromRoad < roadWidth) {
+        // Aggressively lower terrain in road area
+        const edgeFactor = Math.pow(distanceFromRoad / roadWidth, 2.5); // Strong falloff
+        const roadHeight = -5.0; // Much lower than road to prevent any overlap
+        height = THREE.MathUtils.lerp(roadHeight, height, edgeFactor);
+      }
 
       positions[i + 2] = Math.max(height, this.waterLevel);
     }
@@ -121,7 +139,7 @@ export class Terrain {
     const mesh = new THREE.Mesh(geometry, this.material);
     mesh.position.set(chunkX * this.chunkSize, 0, chunkZ * this.chunkSize);
     mesh.receiveShadow = true;
-    mesh.frustumCulled = true;
+    mesh.frustumCulled = false; // Prevent culling artifacts
 
     const chunk: TerrainChunk = {
       mesh,

@@ -7,9 +7,14 @@ import { SkyShader } from '@/lib/world/SkyShader';
 import { Road } from '@/lib/world/Road';
 import { Terrain } from '@/lib/world/Terrain';
 import { Water } from '@/lib/world/Water';
+import { RoadRailings } from '@/lib/world/RoadRailings';
+import { Trees } from '@/lib/world/Trees';
+import { Rocks } from '@/lib/world/Rocks';
+import { Traffic } from '@/lib/world/Traffic';
 import { Palette, Season, Mood } from '@/lib/world/Palette';
 import { Car } from '@/lib/vehicle/Car';
 import { Cat } from '@/lib/vehicle/Cat';
+import { Minimap } from '@/components/Minimap';
 
 interface GameCanvasProps {
   onEngineReady?: (engine: Engine) => void;
@@ -19,6 +24,10 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const [fps, setFps] = useState(0);
+  const [carPosition, setCarPosition] = useState(new THREE.Vector3());
+  const [carForward, setCarForward] = useState(new THREE.Vector3(0, 0, 1));
+  const [roadSegments, setRoadSegments] = useState<Array<{ center: THREE.Vector3 }>>([]);
+  const [trafficCars, setTrafficCars] = useState<Array<{ position: THREE.Vector3 }>>([]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -32,8 +41,8 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
 
     engineRef.current = engine;
 
-    // Get initial palette (Summer + Sunset Glow)
-    const palette = Palette.get(Season.SUMMER, Mood.SUNSET_GLOW);
+    // Get initial palette (Spring + Chill for realistic green landscape)
+    const palette = Palette.get(Season.SPRING, Mood.CHILL);
 
     // Create sky
     const sky = new SkyShader();
@@ -51,11 +60,27 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
     terrain.updateColors(palette.terrainColor, palette.terrainColor2);
     engine.sceneGraph.add(terrain.getGroup());
 
-    // Create water
+    // Create water (lakes at lower elevation)
     const water = new Water(500);
     water.updateColor(palette.waterColor);
-    water.setPosition(0);
+    water.setPosition(-2); // Match terrain water level
     engine.sceneGraph.add(water.getMesh());
+
+    // Create road railings
+    const railings = new RoadRailings();
+    engine.sceneGraph.add(railings.getGroup());
+
+    // Create trees for autumn landscape
+    const trees = new Trees();
+    engine.sceneGraph.add(trees.getGroup());
+
+    // Create rocks for landscape variety
+    const rocks = new Rocks();
+    engine.sceneGraph.add(rocks.getGroup());
+
+    // Traffic disabled per user request
+    // const traffic = new Traffic();
+    // engine.sceneGraph.add(traffic.getGroup());
 
     // Create car
     const car = new Car({
@@ -63,6 +88,8 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
       acceleration: 20,
       turnSpeed: 2.5,
     });
+    // Start car at proper height on road (elevated to match road)
+    car.setPosition(new THREE.Vector3(0, 0.55, 0));
     engine.sceneGraph.add(car.getGroup());
 
     // Create cat (passenger)
@@ -73,6 +100,9 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
     let frameCount = 0;
     let lastFpsUpdate = performance.now();
     let lastCameraSwitch = 0;
+    let lastTerrainUpdate = 0;
+    let lastTreeUpdate = 0;
+    let lastRockUpdate = 0;
 
     engine.onUpdate((dt) => {
       // Get input
@@ -80,9 +110,9 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
       const brake = engine.input.isKeyPressed('s') || engine.input.isKeyPressed('arrowdown') ? 1 : 0;
       let steering = 0;
       if (engine.input.isKeyPressed('a') || engine.input.isKeyPressed('arrowleft')) {
-        steering = 1;
+        steering = -1; // Turn left
       } else if (engine.input.isKeyPressed('d') || engine.input.isKeyPressed('arrowright')) {
-        steering = -1;
+        steering = 1; // Turn right
       }
 
       // Update car physics
@@ -101,13 +131,37 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
       road.extend(car.getPosition().z);
       road.update(dt);
 
-      // Update terrain around camera
-      terrain.update(car.getPosition().x, car.getPosition().z);
+      // Update railings
+      railings.update(car.getPosition().z);
+
+      // Update terrain around camera (throttled for stability)
+      const now = performance.now();
+      if (now - lastTerrainUpdate > 500) { // Every 500ms
+        terrain.update(car.getPosition().x, car.getPosition().z);
+        lastTerrainUpdate = now;
+      }
+
+      // Update trees (throttled for stability)
+      if (now - lastTreeUpdate > 300) { // Every 300ms
+        trees.update(car.getPosition().x, car.getPosition().z);
+        lastTreeUpdate = now;
+      }
+
+      // Update rocks (throttled for stability)
+      if (now - lastRockUpdate > 300) { // Every 300ms
+        rocks.update(car.getPosition().x, car.getPosition().z);
+        lastRockUpdate = now;
+      }
+
+      // Traffic disabled
+      // traffic.update(dt, car.getPosition().z, car.getSpeed());
 
       // Update water
+      water.updatePosition(car.getPosition().x, car.getPosition().z);
       water.update(dt);
 
       // Update sky
+      sky.updatePosition(car.getPosition()); // Keep sky centered on camera
       sky.update(
         palette.skyTop,
         palette.skyHorizon,
@@ -136,11 +190,21 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
 
       // Update FPS counter
       frameCount++;
-      const now = performance.now();
       if (now - lastFpsUpdate >= 1000) {
         setFps(Math.round((frameCount * 1000) / (now - lastFpsUpdate)));
         frameCount = 0;
         lastFpsUpdate = now;
+      }
+
+      // Update minimap data (throttled)
+      if (frameCount % 3 === 0) {
+        setCarPosition(car.getPosition().clone());
+        setCarForward(car.getForward().clone());
+        // Get road segments for minimap (sample every 5th for performance)
+        const segments = road.getSegments().filter((_, i) => i % 5 === 0);
+        setRoadSegments(segments);
+        // Traffic disabled
+        // setTrafficCars(traffic.getCars());
       }
     });
 
@@ -157,6 +221,10 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
       road.dispose();
       terrain.dispose();
       water.dispose();
+      railings.dispose();
+      trees.dispose();
+      rocks.dispose();
+      // traffic.dispose();
       car.dispose();
       cat.dispose();
     };
@@ -193,6 +261,12 @@ export function GameCanvas({ onEngineReady }: GameCanvasProps) {
         <div>CatRoads</div>
         <div>FPS: {fps}</div>
       </div>
+      <Minimap
+        carPosition={carPosition}
+        carForward={carForward}
+        roadSegments={roadSegments}
+        trafficCars={trafficCars}
+      />
     </>
   );
 }

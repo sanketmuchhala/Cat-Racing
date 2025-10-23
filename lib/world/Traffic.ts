@@ -8,6 +8,7 @@ interface TrafficCar {
   speed: number;
   lane: number; // -1 = left, 0 = center, 1 = right
   distance: number;
+  direction: number; // 1 = forward (same as player), -1 = oncoming
 }
 
 export class Traffic {
@@ -18,12 +19,24 @@ export class Traffic {
 
   constructor() {
     this.group = new THREE.Group();
+
+    // Spawn initial traffic cars (mix of forward and oncoming)
+    for (let i = 0; i < 3; i++) {
+      this.spawnCar(20 + i * 30, 1); // Forward traffic
+    }
+    for (let i = 0; i < 3; i++) {
+      this.spawnCar(50 + i * 40, -1); // Oncoming traffic
+    }
   }
 
   update(dt: number, playerZ: number, playerSpeed: number): void {
-    // Remove cars that are too far behind
+    // Remove cars that are too far behind or ahead
     this.cars = this.cars.filter((car) => {
-      if (car.distance < playerZ - 100) {
+      const isTooFar = car.direction === 1
+        ? car.distance < playerZ - 100  // Forward cars behind player
+        : car.distance > playerZ + 100; // Oncoming cars ahead of player
+
+      if (isTooFar) {
         this.group.remove(car.mesh);
         car.mesh.geometry.dispose();
         (car.mesh.material as THREE.Material).dispose();
@@ -32,31 +45,45 @@ export class Traffic {
       return true;
     });
 
-    // Spawn new cars ahead
-    if (this.cars.length < this.maxCars) {
-      this.spawnCar(playerZ + 50 + Math.random() * 50);
+    // Count forward and oncoming cars
+    const forwardCars = this.cars.filter(c => c.direction === 1).length;
+    const oncomingCars = this.cars.filter(c => c.direction === -1).length;
+
+    // Spawn new forward cars ahead
+    if (forwardCars < this.maxCars / 2) {
+      this.spawnCar(playerZ + 50 + Math.random() * 50, 1);
+    }
+
+    // Spawn new oncoming cars ahead
+    if (oncomingCars < this.maxCars / 2) {
+      this.spawnCar(playerZ + 80 + Math.random() * 60, -1);
     }
 
     // Update car positions
     this.cars.forEach((car) => {
-      // Cars drive at slightly varying speeds
-      car.speed = 20 + Math.random() * 10;
+      // Update distance based on direction
+      const moveSpeed = car.speed * car.direction;
+      car.distance += moveSpeed * dt;
 
-      // Update distance
-      car.distance += car.speed * dt;
+      // Lane offset (oncoming cars use opposite side lanes)
+      let laneOffset = car.lane * 2.5;
+      if (car.direction === -1) {
+        laneOffset = -laneOffset; // Flip to opposite side for oncoming
+      }
 
-      // Update mesh position
-      const laneOffset = car.lane * 2.5;
-      car.mesh.position.set(laneOffset, 0.5, car.distance);
+      // Update mesh position (elevated to match road)
+      car.mesh.position.set(laneOffset, 0.55, car.distance);
 
-      // Simple lane-keeping and avoidance (TODO: improve)
-      // For now, cars just stay in their lane
+      // Rotate oncoming cars to face the correct direction
+      if (car.direction === -1) {
+        car.mesh.rotation.y = Math.PI; // 180 degrees
+      }
     });
   }
 
-  private spawnCar(distance: number): void {
-    // Choose random lane
-    const lane = Math.floor(Math.random() * 3) - 1; // -1, 0, 1
+  private spawnCar(distance: number, direction: number = 1): void {
+    // Choose random lane (for oncoming, stay in their lanes which will be flipped)
+    const lane = Math.floor(Math.random() * 2) - 0.5; // -0.5 or 0.5 for 2 lanes per side
 
     // Create simple car mesh
     const geometry = new THREE.BoxGeometry(1.8, 1, 3.5);
@@ -74,6 +101,7 @@ export class Traffic {
       speed: 20 + Math.random() * 10,
       lane,
       distance,
+      direction,
     };
 
     this.cars.push(car);
@@ -82,6 +110,14 @@ export class Traffic {
 
   getGroup(): THREE.Group {
     return this.group;
+  }
+
+  getCars(): Array<{ position: THREE.Vector3; lane: number; direction: number }> {
+    return this.cars.map((car) => ({
+      position: car.mesh.position.clone(),
+      lane: car.lane,
+      direction: car.direction,
+    }));
   }
 
   setEnabled(enabled: boolean): void {

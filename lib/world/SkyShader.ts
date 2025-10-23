@@ -75,6 +75,7 @@ export class SkyShader {
     const geometry = new THREE.SphereGeometry(500, 32, 32);
     this.mesh = new THREE.Mesh(geometry, this.material);
     this.mesh.renderOrder = -1;
+    this.mesh.frustumCulled = false; // Sky should always render
   }
 
   update(
@@ -112,6 +113,11 @@ export class SkyShader {
 
   getMesh(): THREE.Mesh {
     return this.mesh;
+  }
+
+  updatePosition(cameraPosition: THREE.Vector3): void {
+    // Keep sky centered on camera
+    this.mesh.position.copy(cameraPosition);
   }
 
   dispose(): void {
